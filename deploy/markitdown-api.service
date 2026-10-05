@@ -1,0 +1,52 @@
+# systemd unit for markitdown-api, installed by `make install-service`.
+#
+# `make start` runs the server with nohup and a pid file, which is fine while
+# working on it but has no answer for the failure that matters in production:
+# the process going away. A segfault in a native extension, an out-of-memory
+# kill, a stray signal — all of them leave a dead service, an empty log, and
+# every request failing at the proxy until someone notices.
+#
+# Under systemd the same failures are handled and recorded from the outside:
+# the service is restarted within seconds, and `journalctl -u markitdown-api`
+# shows the exit code or the signal that ended the previous run.
+#
+# __ROOT__, __USER__ and __MEMORY_MAX__ are substituted at install time.
+
+[Unit]
+Description=MarkItDown HTTP API (OCR and document conversion)
+Documentation=file://__ROOT__/docs/API.md
+After=network-online.target
+Wants=network-online.target
+# Never stop trying to restart: a service that gives up after a burst of
+# failures is exactly the state this unit exists to prevent.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=__USER__
+WorkingDirectory=__ROOT__
+Environment=MARKITDOWN_ENV_FILE=__ROOT__/.env
+ExecStart=__ROOT__/.venv-api/bin/markitdown-api
+SyslogIdentifier=markitdown-api
+
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# Bound the service's memory so one runaway conversion cannot take the whole
+# machine (database, web server) down with it. Crossing the limit kills this
+# service only; systemd restarts it and journald records why.
+MemoryAccounting=yes
+MemoryMax=__MEMORY_MAX__
+
+# The server converts whatever it is sent, so it runs with as little as it can:
+# no privilege escalation, its own /tmp, and no write access to /usr or /etc.
+# The home directory stays writable on purpose — the offline OCR models live in
+# ~/.cache/markitdown and are downloaded on first use.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

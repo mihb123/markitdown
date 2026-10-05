@@ -69,6 +69,9 @@ pip install -e 'packages/markitdown[all]'
 
 ## Usage
 
+For a concise guide covering every file type, image OCR, bank receipts, cloud
+services, Python usage, and the HTTP API, see [docs/USAGE.md](docs/USAGE.md).
+
 ### Command-Line
 
 ```bash
@@ -86,6 +89,31 @@ You can also pipe content:
 ```bash
 cat path-to-file.pdf | markitdown
 ```
+
+#### Bank transfer receipts
+
+Use `-b` (or `--bank`) to read a money-transfer receipt image and print the beneficiary details as JSON:
+
+```bash
+markitdown -b receipt.png
+```
+
+```json
+{
+  "amount": "89000",
+  "account_number": "0251002726351",
+  "account_name": "TRAN TU UYEN",
+  "bank": "Vietcombank",
+  "content": "VU NGOC HOAN chuyen tien",
+  "transaction_time": ""
+}
+```
+
+The amount is digits only, and any field that could not be recognized is an empty string. Account fields describe the receiving account; the sender, the fee and the transaction id are never reported. `transaction_time` prefers a labelled transaction date/time row and otherwise reads any row printing a full date (numeric dates are day-first, as in Vietnam); the row must meet `MARKITDOWN_BANK_TIME_MIN_CONFIDENCE` (default `0.85`, configurable in `.env`). It uses `YYYY-MM-DDTHH:MM` (or `YYYY-MM-DDTHH:MM:SS` when seconds are printed), or `YYYY-MM-DD` when only the date is certain, with no inferred timezone. Missing or conflicting timestamps are empty strings.
+
+Bank receipt extraction always uses the local offline OCR model. The `-cl`
+(`--cloud`) option does not apply to `--bank`; it only switches `--text` image
+OCR to the configured cloud vision model.
 
 ### Optional Dependencies
 MarkItDown has optional dependencies for activating various file formats. Earlier in this document, we installed all optional dependencies with the `[all]` option. However, you can also install them individually for more control. For example:
@@ -247,14 +275,15 @@ More information about Azure Content Understanding can be found [here](https://l
 To use Microsoft Document Intelligence for conversion:
 
 ```bash
-markitdown path-to-file.pdf -o document.md -d -e "<document_intelligence_endpoint>"
+markitdown path-to-file.pdf -o document.md --use-docintel -e "<document_intelligence_endpoint>"
 ```
 
-The endpoint can also be set once in the environment, so callers only need `-d`:
+The endpoint can also be set once in the environment, so callers only need
+`--use-docintel`:
 
 ```bash
 export MARKITDOWN_DOCINTEL_ENDPOINT="<document_intelligence_endpoint>"
-markitdown path-to-file.pdf -o document.md -d
+markitdown path-to-file.pdf -o document.md --use-docintel
 ```
 
 More information about how to set up an Azure Document Intelligence Resource can be found [here](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/how-to-guides/create-document-intelligence-resource?view=doc-intel-4.0.0)

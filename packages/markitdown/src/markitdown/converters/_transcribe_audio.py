@@ -13,6 +13,9 @@ try:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=DeprecationWarning)
         warnings.filterwarnings("ignore", category=SyntaxWarning)
+        # pydub warns about a missing ffmpeg the moment it is imported, which
+        # happens on every conversion — including images and documents, where
+        # ffmpeg plays no part. Audio conversion still fails loudly without it.
         warnings.filterwarnings(
             "ignore",
             category=RuntimeWarning,

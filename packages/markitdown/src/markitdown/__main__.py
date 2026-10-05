@@ -11,6 +11,9 @@ from textwrap import dedent
 from importlib.metadata import entry_points
 from .__about__ import __version__
 from ._markitdown import MarkItDown, StreamInfo, DocumentConverterResult
+from ._exceptions import MarkItDownException
+
+IMAGE_DESCRIPTION_LANGUAGES = ("en", "vi")
 
 
 def main():
@@ -82,7 +85,6 @@ def main():
 
     cloud_group = parser.add_mutually_exclusive_group()
     cloud_group.add_argument(
-        "-d",
         "--use-docintel",
         action="store_true",
         help="Use Document Intelligence to extract text instead of offline conversion. Requires a valid Document Intelligence Endpoint.",
@@ -142,8 +144,48 @@ def main():
         help="Keep data URIs (like base64-encoded images) in the output. By default, data URIs are truncated.",
     )
 
+    parser.add_argument(
+        "-t",
+        "--text",
+        action="store_true",
+        dest="image_ocr",
+        help="For images: extract text (OCR). Uses a local offline model by default.",
+    )
+
+    parser.add_argument(
+        "-d",
+        "--des",
+        nargs="?",
+        const="en",
+        choices=IMAGE_DESCRIPTION_LANGUAGES,
+        dest="image_description_language",
+        help="For images: generate a cloud description/caption in the requested language: en or vi. Defaults to en.",
+    )
+
+    parser.add_argument(
+        "-b",
+        "--bank",
+        action="store_true",
+        dest="image_bank",
+        help="For images: read a bank transfer receipt and print the amount, account number, account holder, bank, transfer message and transaction time as JSON. Unrecognized or uncertain fields are empty strings.",
+    )
+
+    parser.add_argument(
+        "-cl",
+        "--cloud",
+        action="store_true",
+        dest="image_cloud",
+        help="For image OCR: use the configured cloud vision API instead of the local model. Image descriptions use cloud by default. Does not apply to --bank, which always runs locally.",
+    )
+
+    parser.add_argument(
+        "--debug-timing",
+        action="store_true",
+        help="Print per-step conversion timings to stderr.",
+    )
+
     parser.add_argument("filename", nargs="?")
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_image_description_args(sys.argv[1:]))
 
     # Parse the extension hint
     extension_hint = args.extension
@@ -248,17 +290,35 @@ def main():
     else:
         markitdown = MarkItDown(enable_plugins=args.use_plugins)
 
-    if args.filename is None:
-        # Windows pipe-backed stdin can report seekable() even though it cannot rewind.
-        result = markitdown.convert_stream(
-            io.BytesIO(sys.stdin.buffer.read()),
-            stream_info=stream_info,
-            keep_data_uris=args.keep_data_uris,
+    image_description = args.image_description_language is not None
+    conversion_kwargs: Dict[str, Any] = {
+        "stream_info": stream_info,
+        "keep_data_uris": args.keep_data_uris,
+    }
+    if args.image_ocr:
+        conversion_kwargs["image_ocr"] = True
+    if args.image_bank:
+        conversion_kwargs["image_bank"] = True
+    if image_description:
+        conversion_kwargs.update(
+            image_description=True,
+            description_language=args.image_description_language,
+            image_description_cloud=True,
         )
-    else:
-        result = markitdown.convert(
-            args.filename, stream_info=stream_info, keep_data_uris=args.keep_data_uris
-        )
+    if args.image_cloud:
+        conversion_kwargs["image_cloud"] = True
+    if args.debug_timing:
+        conversion_kwargs["debug_timing"] = True
+
+    try:
+        if args.filename is None:
+            result = markitdown.convert_stream(
+                io.BytesIO(sys.stdin.buffer.read()), **conversion_kwargs
+            )
+        else:
+            result = markitdown.convert(args.filename, **conversion_kwargs)
+    except MarkItDownException as exc:
+        _exit_with_error(str(exc))
 
     _handle_output(args, result)
 
@@ -278,8 +338,31 @@ def _handle_output(args, result: DocumentConverterResult):
 
 
 def _exit_with_error(message: str):
-    print(message)
+    print(message, file=sys.stderr)
     sys.exit(1)
+
+
+def _normalize_image_description_args(args: list[str]) -> list[str]:
+    """Normalize --des so a following filename is not consumed as a language."""
+    normalized_args = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        normalized_args.append(arg)
+
+        if arg in ("-d", "--des"):
+            next_index = index + 1
+            if next_index < len(args):
+                next_arg = args[next_index]
+                if (
+                    not next_arg.startswith("-")
+                    and next_arg not in IMAGE_DESCRIPTION_LANGUAGES
+                ):
+                    normalized_args.append("en")
+
+        index += 1
+
+    return normalized_args
 
 
 if __name__ == "__main__":

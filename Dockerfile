@@ -25,6 +25,14 @@ RUN pip --no-cache-dir install \
     /app/packages/markitdown[all] \
     /app/packages/markitdown-sample-plugin
 
+# opencv-python (pulled in by the OCR extras) links libGL.so.1 at import time,
+# which this image does not ship. The headless wheel is the same module without
+# that link; both write the same cv2/ directory, so it has to be swapped in after.
+RUN if pip show opencv-python >/dev/null 2>&1; then \
+    pip uninstall -y opencv-python && \
+    pip --no-cache-dir install --force-reinstall opencv-python-headless; \
+    fi
+
 # Default USERID and GROUPID
 ARG USERID=nobody
 ARG GROUPID=nogroup
