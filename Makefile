@@ -2,7 +2,7 @@
 #
 # `make install` installs the built wheel, `make dev` installs the working tree
 # in editable mode so source edits take effect without reinstalling. Both
-# recreate the pipx venv, which re-downloads the extras listed in EXTRAS.
+# recreate the uv tool venv, which re-downloads the extras listed in EXTRAS.
 #
 # `make serve` runs the API server in the foreground; `make start|stop|restart|
 # status|logs` manage it as a background process tracked by a pid file. Both do
@@ -11,12 +11,11 @@
 PACKAGE_DIR := packages/markitdown
 API_DIR     := packages/markitdown-api
 DIST_DIR    := dist
-PIPX        ?= pipx
 UV          ?= uv
-VENV_PYTHON := $(HOME)/.local/share/pipx/venvs/markitdown/bin/python
+VENV_PYTHON  = $(shell $(UV) tool dir 2>/dev/null)/markitdown/bin/python
 
-# The API server runs from a project-local venv rather than pipx, so `make serve`
-# works on a machine that only has uv.
+# The API server runs from a project-local venv rather than the CLI's tool venv,
+# so the two installs do not interfere.
 API_VENV    := .venv-api
 API_PYTHON  := $(API_VENV)/bin/python
 API_BIN     := $(API_VENV)/bin/markitdown-api
@@ -69,21 +68,17 @@ help:  ## List the available targets
 
 build:  ## Build the wheel and sdist into dist/
 	@rm -rf $(DIST_DIR)
-	@if command -v uv >/dev/null 2>&1; then \
-		uv build --out-dir $(DIST_DIR) $(PACKAGE_DIR); \
-	else \
-		$(PIPX) run build --outdir $(DIST_DIR) $(PACKAGE_DIR); \
-	fi
+	$(UV) build --out-dir $(DIST_DIR) $(PACKAGE_DIR)
 
 install: build  ## Build, then install the wheel as the `markitdown` command
 	@wheel=$$(ls $(DIST_DIR)/*.whl | head -1); \
 	echo "Installing $$wheel with extras [$(EXTRAS)]"; \
-	$(PIPX) install --force "$$wheel[$(EXTRAS)]"
+	$(UV) tool install --force --reinstall-package markitdown "$$wheel[$(EXTRAS)]"
 	$(call use_headless_cv2,$(VENV_PYTHON))
 	@$(MAKE) --no-print-directory where
 
 dev:  ## Install the working tree in editable mode (source edits apply live)
-	$(PIPX) install --force --editable "$(PACKAGE_DIR)[$(EXTRAS)]"
+	$(UV) tool install --force --editable "$(PACKAGE_DIR)[$(EXTRAS)]"
 	$(call use_headless_cv2,$(VENV_PYTHON))
 	@$(MAKE) --no-print-directory where
 
@@ -199,7 +194,7 @@ test-api: | $(API_BIN)  ## Run the API test suite
 	@$(API_PYTHON) -m pytest $(API_DIR)/tests
 
 uninstall:  ## Remove the installed CLI
-	$(PIPX) uninstall markitdown
+	$(UV) tool uninstall markitdown
 
 test:  ## Run the test suite with the installed CLI's interpreter
 	@test -x $(VENV_PYTHON) || { echo "markitdown is not installed; run 'make dev' first"; exit 1; }
