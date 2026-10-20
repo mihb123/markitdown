@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import shutil
+import subprocess
 import traceback
 import io
 from dataclasses import dataclass
@@ -51,6 +52,48 @@ from ._exceptions import (
     UnsupportedFormatException,
     FailedConversionAttempt,
 )
+
+
+_BOT_CHALLENGE_STATUS_CODES = (403, 429, 503)
+_HEADLESS_BROWSERS = (
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "brave",
+    "microsoft-edge",
+)
+# Titles of challenge pages that mean the headless browser did not get through
+_BOT_CHALLENGE_TITLES = (b"Vercel Security Checkpoint", b"Just a moment...")
+
+
+def _render_with_headless_browser(uri: str) -> Optional[bytes]:
+    """Return the rendered DOM of uri using a headless Chromium-based browser, or None if unavailable."""
+    browser = os.environ.get("MARKITDOWN_BROWSER") or next(
+        (b for b in map(shutil.which, _HEADLESS_BROWSERS) if b), None
+    )
+    if browser is None:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                browser,
+                "--headless=new",
+                "--disable-gpu",
+                "--virtual-time-budget=15000",
+                "--dump-dom",
+                uri,
+            ],
+            capture_output=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    if any(t in result.stdout for t in _BOT_CHALLENGE_TITLES):
+        return None
+    return result.stdout
 
 
 def _get_content_disposition_filename(content_disposition: str) -> Optional[str]:
@@ -517,6 +560,25 @@ class MarkItDown:
         # HTTP/HTTPS URIs
         elif scheme in ("http", "https"):
             response = self._requests_session.get(uri, stream=True)
+            if response.status_code in _BOT_CHALLENGE_STATUS_CODES:
+                # Bot-protection pages (e.g., Vercel Security Checkpoint, Cloudflare)
+                # need JavaScript, so retry the page in a headless browser.
+                html = _render_with_headless_browser(uri)
+                if html is not None:
+                    base_guess = StreamInfo(
+                        mimetype="text/html",
+                        extension=".html",
+                        charset="utf-8",
+                        url=uri,
+                    )
+                    if stream_info is not None:
+                        base_guess = base_guess.copy_and_update(stream_info)
+                    return self.convert_stream(
+                        io.BytesIO(html),
+                        stream_info=base_guess,
+                        url=mock_url,
+                        **kwargs,
+                    )
             response.raise_for_status()
             return self.convert_response(
                 response,
