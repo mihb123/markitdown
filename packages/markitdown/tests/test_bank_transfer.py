@@ -1,5 +1,6 @@
 #!/usr/bin/env python3 -m pytest
 import inspect
+import io
 
 from markitdown.converters._bank_fields import (
     empty_info,
@@ -276,6 +277,25 @@ COMPANY_RECEIPT = "\n".join(
     ]
 )
 
+# The same VPBank layout as above, but OCR dropped the grey underlined "đ" after
+# the headline amount, and a "Phí 0 đ" row follows the message.
+VPBANK_NO_CURRENCY_RECEIPT = "\n".join(
+    [
+        "VPBank",
+        "Thành công",
+        "500 000",
+        "Thông tin nguöi nhân",
+        "CTY TNHH MTV SX TM VA DV AMAC",
+        "1059814478",
+        "Thòi gian 28/07/2026",
+        "Nôi dung Coc tien may ao dong phuc",
+        "Phí 0 d",
+        "Mã giao dich FT26209688203391/28226783",
+        "3148",
+        "Mã tra soát 833148",
+    ]
+)
+
 # A paper payment order ("Ủy nhiệm chi"): bilingual labels, several fields per
 # row, and the payer's block printed above the beneficiary's behind the very
 # same labels.
@@ -531,8 +551,61 @@ def test_company_beneficiary_receipt() -> None:
     assert info["account_name"] == "CTY TNHH MTV SX TM VA DV AMAC"
     assert info["bank"] == ""
     assert info["content"] == "DO HONG VU chuyen tien coc"
-    # OCR lost the leading digit of "1 000 000 đ" (true amount: 1000000).
-    assert info["amount"] == "000000"
+    # OCR lost the leading digit of "1 000 000 đ" (true amount: 1000000); a zero
+    # amount is reported as none so the caller can re-read the image.
+    assert info["amount"] == ""
+
+
+def test_amount_without_currency_glyph_and_fee_row() -> None:
+    info = normalize_info(parse_bank_text(VPBANK_NO_CURRENCY_RECEIPT))
+
+    assert info["amount"] == "500000"
+    assert info["account_number"] == "1059814478"
+    assert info["account_name"] == "CTY TNHH MTV SX TM VA DV AMAC"
+    assert info["bank"] == ""
+    # The fee row must not be glued onto the message as a "wrapped" line.
+    assert info["content"] == "Coc tien may ao dong phuc"
+
+
+def test_zero_amount_is_never_reported() -> None:
+    text = "\n".join(["Thành công", "0 d", "Phí 0 VND", "1059814478"])
+    assert normalize_info(parse_bank_text(text))["amount"] == ""
+    assert normalize_amount("0 d") == ""
+    assert normalize_amount("000 000 d") == ""
+    # A zero row is skipped, not allowed to shadow the real amount after it.
+    text = "\n".join(["Phí 0 d", "500 000 d"])
+    assert normalize_info(parse_bank_text(text))["amount"] == "500000"
+
+
+def test_zero_amount_triggers_a_reread(monkeypatch) -> None:
+    from markitdown.converters import _bank_transfer
+
+    reads = []
+
+    def fake_extract(stream, info, *, debug_timing=False, det_max_side=None):
+        reads.append(det_max_side)
+        amount = {None: "000 000 d", 1600: "1000 000 d"}[det_max_side]
+        return {"account_number": "1059814478", "amount": amount}
+
+    monkeypatch.setattr(_bank_transfer, "_extract_via_ocr", fake_extract)
+    info = _bank_transfer.extract_bank_info(io.BytesIO(b""))
+
+    assert info["amount"] == "1000000"
+    assert info["account_number"] == "1059814478"
+    assert reads == [None, 1600]
+
+
+def test_non_receipt_is_not_reread(monkeypatch) -> None:
+    from markitdown.converters import _bank_transfer
+
+    reads = []
+    monkeypatch.setattr(
+        _bank_transfer,
+        "_extract_via_ocr",
+        lambda *a, **k: reads.append(1) or {},
+    )
+    assert _bank_transfer.extract_bank_info(io.BytesIO(b""))["amount"] == ""
+    assert len(reads) == 1
 
 
 def test_payment_order_reads_the_beneficiary_block() -> None:

@@ -86,7 +86,9 @@ def empty_info() -> Dict[str, str]:
 
 
 # Reduce an amount to plain digits: separators, currency markers and a trailing
-# decimal part ("1.234.567,00") are dropped so "89,000 VND" becomes "89000".
+# decimal part ("1.234.567,00") are dropped so "89,000 VND" becomes "89000". A
+# zero amount comes back empty: nobody transfers 0 đ, so a zero is a misread (a
+# fee row, or a lost leading digit) and reporting it would only hide that.
 def normalize_amount(value: str) -> str:
     match = re.search(r"\d[\d.,\s]*", fold_ascii(value))
     if not match:
@@ -95,7 +97,7 @@ def normalize_amount(value: str) -> str:
     digits = match.group(0).strip()
     digits = re.sub(r"[.,](\d{1,2})$", "", digits)
     digits = re.sub(r"\D", "", digits)
-    return digits.lstrip("0") or digits
+    return digits.lstrip("0")
 
 
 # Keep only the characters an account number can contain. A few banks issue

@@ -564,12 +564,14 @@ def _reconstruct_lines(detections: List[Any]) -> List[Dict[str, Any]]:
 # Locate the text boxes, detecting on a downscaled copy of the image and mapping
 # the boxes back onto full-resolution coordinates. Returns None when the page
 # holds no text.
-def _detect_boxes(engine: Any, image: Any) -> Optional[Any]:
+def _detect_boxes(
+    engine: Any, image: Any, det_max_side: Optional[int] = None
+) -> Optional[Any]:
     import cv2
     import numpy as np
 
     height, width = image.shape[:2]
-    max_side = _det_max_side()
+    max_side = _det_max_side() if det_max_side is None else max(0, det_max_side)
     scale = min(1.0, max_side / float(max(height, width))) if max_side else 1.0
     if scale < 1.0:
         small = cv2.resize(
@@ -654,11 +656,17 @@ def _rotate_boxes(engine: Any, boxes: Any, width: int, height: int, turns: int) 
 #
 # Returns the detections in RapidOCR's own [box, text, score] shape, plus the
 # rotation applied, for the log line.
-def _read_page(engine: Any, image: Any, *, debug_timing: bool) -> Tuple[List[Any], int]:
+def _read_page(
+    engine: Any,
+    image: Any,
+    *,
+    debug_timing: bool,
+    det_max_side: Optional[int] = None,
+) -> Tuple[List[Any], int]:
     import numpy as np
 
     with log_timing("image.ocr.detect", debug_timing):
-        boxes = _detect_boxes(engine, image)
+        boxes = _detect_boxes(engine, image, det_max_side)
     if boxes is None:
         return [], 0
 
@@ -689,7 +697,12 @@ def _read_page(engine: Any, image: Any, *, debug_timing: bool) -> Tuple[List[Any
 
 
 # Run the OCR engine over an image stream without disturbing its position.
-def _detect(file_stream: BinaryIO, *, debug_timing: bool = False) -> List[Any]:
+def _detect(
+    file_stream: BinaryIO,
+    *,
+    debug_timing: bool = False,
+    det_max_side: Optional[int] = None,
+) -> List[Any]:
     import numpy as np
     from PIL import Image
 
@@ -737,7 +750,10 @@ def _detect(file_stream: BinaryIO, *, debug_timing: bool = False) -> List[Any]:
             with log_timing("image.ocr.engine_infer", debug_timing):
                 if use_fast_path:
                     detections, rotation = _read_page(
-                        engine, image, debug_timing=debug_timing
+                        engine,
+                        image,
+                        debug_timing=debug_timing,
+                        det_max_side=det_max_side,
                     )
                 else:
                     detections, _elapse = engine(image)
@@ -756,7 +772,9 @@ def _detect(file_stream: BinaryIO, *, debug_timing: bool = False) -> List[Any]:
         img_size[1],
         is_dark,
         rotation,
-        _det_max_side() if use_fast_path else 0,
+        (_det_max_side() if det_max_side is None else det_max_side)
+        if use_fast_path
+        else 0,
         t_prep,
         t_lock_wait,
         t_infer,
@@ -799,13 +817,19 @@ def extract_lines_offline(
     ]
 
 
+# `det_max_side` overrides the detector's longest side for this call only (0 =
+# native resolution): a second read at another scale can recover a digit the
+# first one dropped.
 def extract_line_details_offline(
     file_stream: BinaryIO,
     stream_info: Optional[StreamInfo] = None,
     *,
     debug_timing: bool = False,
+    det_max_side: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    detections = _detect(file_stream, debug_timing=debug_timing)
+    detections = _detect(
+        file_stream, debug_timing=debug_timing, det_max_side=det_max_side
+    )
     with log_timing("image.ocr.reconstruct", debug_timing):
         reconstructed = _reconstruct_lines(detections)
 

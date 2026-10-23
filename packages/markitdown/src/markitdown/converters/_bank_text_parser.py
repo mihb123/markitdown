@@ -209,6 +209,19 @@ _NUMBER = r"\d{1,3}(?:[.,\s]\d{3})+|\d{4,}"
 _AMOUNT_PATTERN = re.compile(
     rf"(?:({_NUMBER})\s*(?:vnd|d)\b|\b(?:vnd|d)\s*({_NUMBER}))", re.IGNORECASE
 )
+
+# A headline amount whose currency glyph OCR dropped: a row holding nothing but a
+# thousands-grouped number ("500 000"), optionally trailed by a stray unit. The
+# unit is the thin, grey, underlined "đ" that the detector skips on some apps.
+# Requiring the grouping keeps a bare id ("833148") from passing for an amount.
+_BARE_AMOUNT_PATTERN = re.compile(
+    r"^\d{1,3}(?:[.,\s]\d{3})+(?:\s*(?:vnd|d))?$", re.IGNORECASE
+)
+
+# A fee row whose label is a single short word ("Phí 0 đ"): too short for the
+# skeleton matcher, so it is recognised by its shape instead — the word "phí"
+# or "fee" followed by an amount.
+_FEE_ROW_PATTERN = re.compile(r"^(?:phi|fee)\b.*\d\s*(?:vnd|d)?$", re.IGNORECASE)
 _NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9 .'\-]{3,}$")
 
 _MINIMUM_ACCOUNT_DIGITS = 6
@@ -383,6 +396,8 @@ def _store(
 # Report whether a wrapped value may run onto this line.
 def _continues_value(line: str) -> bool:
     if _is_boilerplate(line) or _is_stopword_value(line) or _is_digit_line(line):
+        return False
+    if _FEE_ROW_PATTERN.match(fold_ascii(line).strip()):
         return False
     return match_bank(line) is None
 
@@ -608,13 +623,28 @@ def _find_card_content(lines: List[str], account_index: int) -> str:
     return " ".join(parts)
 
 
+# Report whether an amount is zero. No transfer moves 0 đ, so such a value is
+# the fee row or a number whose leading digit OCR lost, never the amount.
+def _is_zero_amount(value: str) -> bool:
+    return not re.sub(r"\D", "", value).strip("0")
+
+
 # Read the headline amount, which is printed next to its currency rather than
-# behind a label on most receipts.
+# behind a label on most receipts. When OCR dropped the currency glyph, fall
+# back to the first row that is nothing but a grouped number. Zero amounts are
+# skipped, so the search goes on to the next candidate.
 def _find_amount(lines: List[str]) -> str:
     for line in lines:
         match = _AMOUNT_PATTERN.search(fold_ascii(line))
         if match:
-            return match.group(1) or match.group(2)
+            value = match.group(1) or match.group(2)
+            if not _is_zero_amount(value):
+                return value
+
+    for line in lines:
+        folded = fold_ascii(line).strip()
+        if _BARE_AMOUNT_PATTERN.match(folded) and not _is_zero_amount(folded):
+            return line.strip()
     return ""
 
 
@@ -896,6 +926,8 @@ def parse_bank_text(
 
     fields = _parse_labelled_rows(lines)
 
+    if _is_zero_amount(fields.get("amount", "")):
+        fields.pop("amount", None)
     if not fields.get("amount"):
         fields["amount"] = _find_amount(lines)
 

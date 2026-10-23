@@ -28,6 +28,13 @@ from .._stream_info import StreamInfo
 
 logger = logging.getLogger("markitdown.bank")
 
+# Detector sizes tried, in order, when the first read yields no usable amount (0
+# counts as none: nobody transfers 0 đ). The size changes how the headline digits
+# are cropped, so a digit the first pass dropped ("000 000 đ" for "1 000 000 đ")
+# can survive another — measured on the dark-mode receipt in `bank-test-images.md`
+# (#13): 960 reads "1 000 000", 1600 reads "1000 000", native reads "000 000".
+_AMOUNT_RETRY_DET_SIDES = (1600, 0)
+
 
 # Read the receipt with local OCR, returning nothing when the OCR extra is not
 # installed or the model fails.
@@ -36,6 +43,7 @@ def _extract_via_ocr(
     stream_info: Optional[StreamInfo],
     *,
     debug_timing: bool = False,
+    det_max_side: Optional[int] = None,
 ) -> Dict[str, Any]:
     if not _local_ocr.is_available():
         logger.warning("[bank] Offline OCR is not available (check dependencies)")
@@ -44,7 +52,10 @@ def _extract_via_ocr(
     try:
         with log_timing("image.bank.ocr", debug_timing):
             lines = _local_ocr.extract_line_details_offline(
-                file_stream, stream_info, debug_timing=debug_timing
+                file_stream,
+                stream_info,
+                debug_timing=debug_timing,
+                det_max_side=det_max_side,
             )
     except Exception as exc:
         logger.warning("[bank] Offline OCR extraction failed: %s", exc)
@@ -72,6 +83,25 @@ def extract_bank_info(
 ) -> Dict[str, str]:
     raw = _extract_via_ocr(file_stream, stream_info, debug_timing=debug_timing)
     result = normalize_info(raw) if raw else empty_info()
+
+    # A receipt was recognized (some field came out) yet its amount did not: read
+    # the image again at another scale and take the first usable amount. Only the
+    # amount is taken from the retry, so the other fields stay as first read.
+    # Without a recognized field the image is not a receipt and a retry is waste.
+    if raw and not result["amount"]:
+        for det_max_side in _AMOUNT_RETRY_DET_SIDES:
+            logger.debug("[bank] No usable amount; re-reading at det=%d", det_max_side)
+            retry = _extract_via_ocr(
+                file_stream,
+                stream_info,
+                debug_timing=debug_timing,
+                det_max_side=det_max_side,
+            )
+            amount = normalize_info(retry)["amount"] if retry else ""
+            if amount:
+                result["amount"] = amount
+                break
+
     logger.debug(
         "[bank] Extraction finished via backend=%s: %s",
         "ocr" if raw else "none",

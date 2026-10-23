@@ -27,6 +27,7 @@ Base URL: `https://amacsport.sgp1.digitaloceanspaces.com/images/`
 | 11 | `6a7ddf99235b9.png` | TPBank | thẻ | tên bank bị cắt còn `VIETCOMBAN...`; banner quảng cáo ở đầu ảnh |
 | 12 | `6a715709dfd45.jpg` | ACB | nhãn ngắn | banner NAPAS chiếm 6 dòng OCR ngay sau nội dung |
 | 13 | `6a71585d6090d.png` | VPBank | dark mode | tên người nhận là **tên công ty**; bank chỉ có logo → rỗng; dark mode làm OCR hỏng chữ số |
+| 14 | `6ada293707fd6.jpg` | VPBank | thẻ sáng | ký hiệu `đ` xám gạch chân sau số tiền bị OCR bỏ sót (`500 000`); dòng `Phí 0 đ` ngay dưới nội dung bị nối vào `content` |
 
 ## 2. Giá trị kỳ vọng
 
@@ -49,6 +50,7 @@ người gửi hoặc mã giao dịch.
 | 11 | `400000` | `0251002726351` | `TRAN TU UYEN` | `Vietcombank` | `Tri chuyen khoan nhanh qua Zalo` |
 | 12 | `1683000` | `1038079000` | `TRAN TU UYEN` | `Vietcombank` | `HA BICH HAO CHUYEN KHOAN-040826-09:52:50 toMS846752` |
 | 13 | `1000000` | `1059814478` | `CTY TNHH MTV SX TM VA DV AMAC` | *(rỗng)* | `DO HONG VU chuyen tien coc` |
+| 14 | `500000` | `1059814478` | `CTY TNHH MTV SX TM VA DV AMAC` | *(rỗng)* | `Coc tien may ao dong phuc` |
 
 Về `bank` rỗng ở ảnh 10 và 13: hai biên lai này chỉ vẽ **logo** bank người nhận,
 không in tên ra chữ. Parser được thiết kế trả rỗng thay vì lấy tên bank của app
@@ -65,6 +67,15 @@ bảng ở mục 2. Chỉ còn **một** trường sai:
 
 Chữ số `1` đã biến mất khỏi đầu vào nên không thể phục hồi ở tầng parser. Ảnh
 này là dark mode với số cỡ rất lớn; cloud VLM đọc đúng.
+
+**Số tiền 0 luôn bị coi là không đọc được.** Không ai chuyển 0 đ, nên `amount`
+bằng 0 (dòng phí `Phí 0 đ`, hoặc `000 000` do mất chữ số đầu) không bao giờ được
+trả ra: parser bỏ qua và tìm ứng viên kế tiếp, còn `normalize_amount` trả rỗng.
+Khi biên lai đã nhận ra các trường khác mà `amount` vẫn rỗng, `extract_bank_info`
+đọc lại ảnh ở kích thước detector khác (`1600`, rồi native) và lấy số tiền đầu
+tiên khác 0 — chỉ lấy `amount`, các trường khác giữ nguyên lần đọc đầu. Kích
+thước detector làm kết quả đổi: ảnh 13 đọc ra `1 000 000` ở 960, `1000 000` ở
+1600 và `000 000` ở native.
 
 ### 3.1 Hai lỗi ở tầng tiền xử lý ảnh đã sửa
 
