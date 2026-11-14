@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import shutil
+import subprocess
 import traceback
 import io
 from dataclasses import dataclass
@@ -42,6 +43,14 @@ from .converters import (
     DocumentIntelligenceConverter,
     ContentUnderstandingConverter,
     CsvConverter,
+    AiChatShareConverter,
+)
+from .converters._ai_chat_share_converter import (
+    CLAUDE,
+    chat_share_platform,
+    claude_blocked_message,
+    claude_snapshot_api_url,
+    needs_browser_render,
 )
 
 from ._base_converter import DocumentConverter, DocumentConverterResult
@@ -51,6 +60,48 @@ from ._exceptions import (
     UnsupportedFormatException,
     FailedConversionAttempt,
 )
+
+
+_BOT_CHALLENGE_STATUS_CODES = (403, 429, 503)
+_HEADLESS_BROWSERS = (
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "brave",
+    "microsoft-edge",
+)
+# Titles of challenge pages that mean the headless browser did not get through
+_BOT_CHALLENGE_TITLES = (b"Vercel Security Checkpoint", b"Just a moment...")
+
+
+def _render_with_headless_browser(uri: str) -> Optional[bytes]:
+    """Return the rendered DOM of uri using a headless Chromium-based browser, or None if unavailable."""
+    browser = os.environ.get("MARKITDOWN_BROWSER") or next(
+        (b for b in map(shutil.which, _HEADLESS_BROWSERS) if b), None
+    )
+    if browser is None:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                browser,
+                "--headless=new",
+                "--disable-gpu",
+                "--virtual-time-budget=15000",
+                "--dump-dom",
+                uri,
+            ],
+            capture_output=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    if any(t in result.stdout for t in _BOT_CHALLENGE_TITLES):
+        return None
+    return result.stdout
 
 
 def _get_content_disposition_filename(content_disposition: str) -> Optional[str]:
@@ -250,6 +301,7 @@ class MarkItDown:
             self.register_converter(OutlookMsgConverter())
             self.register_converter(EpubConverter())
             self.register_converter(CsvConverter())
+            self.register_converter(AiChatShareConverter())
 
             # Register Document Intelligence converter at the top of the stack if endpoint is provided
             docintel_endpoint = kwargs.get("docintel_endpoint")
@@ -516,7 +568,28 @@ class MarkItDown:
             )
         # HTTP/HTTPS URIs
         elif scheme in ("http", "https"):
+            chat_platform = chat_share_platform(uri)
+            if chat_platform is not None and needs_browser_render(uri):
+                # Shared chats that only exist after JavaScript runs (e.g., Gemini)
+                html = _render_with_headless_browser(uri)
+                if html is not None:
+                    return self._convert_rendered_html(
+                        html, uri, stream_info=stream_info, mock_url=mock_url, **kwargs
+                    )
+            if chat_platform == CLAUDE:
+                return self._convert_claude_share(
+                    uri, stream_info=stream_info, mock_url=mock_url, **kwargs
+                )
+
             response = self._requests_session.get(uri, stream=True)
+            if response.status_code in _BOT_CHALLENGE_STATUS_CODES:
+                # Bot-protection pages (e.g., Vercel Security Checkpoint, Cloudflare)
+                # need JavaScript, so retry the page in a headless browser.
+                html = _render_with_headless_browser(uri)
+                if html is not None:
+                    return self._convert_rendered_html(
+                        html, uri, stream_info=stream_info, mock_url=mock_url, **kwargs
+                    )
             response.raise_for_status()
             return self.convert_response(
                 response,
@@ -529,6 +602,61 @@ class MarkItDown:
             raise ValueError(
                 f"Unsupported URI scheme: {uri.split(':')[0]}. Supported schemes are: file:, data:, http:, https:"
             )
+
+    def _convert_rendered_html(
+        self,
+        html: bytes,
+        uri: str,
+        *,
+        stream_info: Optional[StreamInfo] = None,
+        mock_url: Optional[str] = None,
+        **kwargs: Any,
+    ) -> DocumentConverterResult:
+        base_guess = StreamInfo(
+            mimetype="text/html",
+            extension=".html",
+            charset="utf-8",
+            url=uri,
+        )
+        if stream_info is not None:
+            base_guess = base_guess.copy_and_update(stream_info)
+        return self.convert_stream(
+            io.BytesIO(html),
+            stream_info=base_guess,
+            url=mock_url,
+            **kwargs,
+        )
+
+    def _convert_claude_share(
+        self,
+        uri: str,
+        *,
+        stream_info: Optional[StreamInfo] = None,
+        mock_url: Optional[str] = None,
+        **kwargs: Any,
+    ) -> DocumentConverterResult:
+        """claude.ai/share pages read the conversation from a JSON API."""
+        api_url = claude_snapshot_api_url(uri)
+        data: Optional[bytes] = None
+        if api_url is not None:
+            try:
+                response = self._requests_session.get(
+                    api_url, headers={"Accept": "application/json"}, timeout=30
+                )
+                if response.ok and "json" in response.headers.get("content-type", ""):
+                    data = response.content
+            except requests.RequestException:
+                data = None
+        if data is None:
+            raise FileConversionException(claude_blocked_message(uri))
+        base_guess = StreamInfo(
+            mimetype="application/json", extension=".json", charset="utf-8", url=uri
+        )
+        if stream_info is not None:
+            base_guess = base_guess.copy_and_update(stream_info)
+        return self.convert_stream(
+            io.BytesIO(data), stream_info=base_guess, url=mock_url, **kwargs
+        )
 
     def convert_response(
         self,

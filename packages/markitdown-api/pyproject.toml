@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "markitdown-api"
+dynamic = ["version"]
+description = 'HTTP API server for the "markitdown" library (image OCR, bank receipts, document conversion).'
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["markitdown", "api", "ocr", "bank", "pdf", "docx", "xlsx"]
+authors = [
+  { name = "Contributors", email = "noreply@github.com" },
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = [
+  "markitdown[all]>=0.1.6,<0.2.0",
+  "fastapi>=0.110.0",
+  "uvicorn>=0.27.0",
+  "python-multipart>=0.0.9",
+]
+
+# Offline image models used by /v1/text and /v1/bank when no cloud VLM is set.
+[project.optional-dependencies]
+image-ocr = ["markitdown[image-ocr]"]
+image-caption = ["markitdown[image-caption]"]
+
+[project.urls]
+Documentation = "https://github.com/microsoft/markitdown#readme"
+Issues = "https://github.com/microsoft/markitdown/issues"
+Source = "https://github.com/microsoft/markitdown"
+
+[tool.hatch.version]
+path = "src/markitdown_api/__about__.py"
+
+[project.scripts]
+markitdown-api = "markitdown_api.__main__:main"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/markitdown_api"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/markitdown_api"]

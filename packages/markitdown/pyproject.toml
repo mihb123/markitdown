@@ -62,6 +62,9 @@ youtube-transcription = ["youtube-transcript-api~=1.2.3"]
 az-doc-intel = ["azure-ai-documentintelligence", "azure-identity"]
 # >=1.2.0b1 required for to_llm_input() helper used by ContentUnderstandingConverter
 az-content-understanding = ["azure-ai-contentunderstanding>=1.2.0b1", "azure-identity"]
+image-ocr = ["rapidocr-onnxruntime", "wordninja", "pillow"]
+image-caption = ["torch", "torchvision", "transformers>=4.44,<5", "pillow"]
+local-image = ["rapidocr-onnxruntime", "wordninja", "transformers>=4.44,<5", "pillow"]
 
 [project.urls]
 Documentation = "https://github.com/microsoft/markitdown#readme"

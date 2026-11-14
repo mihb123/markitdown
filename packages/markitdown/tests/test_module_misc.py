@@ -23,7 +23,7 @@ from markitdown import (
     FileConversionException,
     StreamInfo,
 )
-from markitdown.converters import YouTubeConverter
+from markitdown.converters import ImageConverter, YouTubeConverter
 
 # This file contains module tests that are not directly tested by the FileTestVectors.
 # This includes things like helper functions and runtime conversion options
@@ -245,6 +245,14 @@ def test_youtube_converter_accepts_supported_url_formats(url: str) -> None:
         io.BytesIO(b"<html></html>"),
         StreamInfo(url=url, extension=".html"),
     )
+
+
+def test_image_converter_accepts_webp() -> None:
+    """Test that WebP files are routed to the image converter."""
+    converter = ImageConverter()
+
+    assert converter.accepts(io.BytesIO(), StreamInfo(extension=".webp"))
+    assert converter.accepts(io.BytesIO(), StreamInfo(mimetype="image/webp"))
 
 
 def test_data_uris() -> None:

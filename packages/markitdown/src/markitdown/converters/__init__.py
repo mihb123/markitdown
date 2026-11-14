@@ -27,6 +27,7 @@ from ._cu_converter import (
 )
 from ._epub_converter import EpubConverter
 from ._csv_converter import CsvConverter
+from ._ai_chat_share_converter import AiChatShareConverter
 
 __all__ = [
     "PlainTextConverter",
@@ -51,4 +52,5 @@ __all__ = [
     "ContentUnderstandingFileType",
     "EpubConverter",
     "CsvConverter",
+    "AiChatShareConverter",
 ]

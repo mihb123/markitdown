@@ -127,6 +127,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-api/
 env/
 venv/
 ENV/
@@ -166,3 +167,4 @@ cython_debug/
 src/.DS_Store
 .DS_Store
 .cursorrules
+test_img/
